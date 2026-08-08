@@ -1,0 +1,32 @@
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.json.key
+google-credentials.json
+atlas-credentials*.env
+*.pem
+*.key
+
+# Temporary data files & scratch files
+idli_b64.txt
+*.b64.txt
+*.tmp
+
+# Build outputs & logs
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
