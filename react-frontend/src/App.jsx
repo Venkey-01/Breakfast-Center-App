@@ -10,14 +10,15 @@ import confetti from 'canvas-confetti';
 import idliImg from './assets/idli.png';
 import dosaImg from './assets/dosa.png';
 import vadaImg from './assets/vada.png';
+import bgImg from './assets/image.png';
 
 const API_BASE = '/api';
 const ADMIN_PASSCODE = 'admin123';
 
 const IMAGES = {
-  Idli: idliImg || 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=600&auto=format&fit=crop&q=80',
-  Dosa: dosaImg || 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=600&auto=format&fit=crop&q=80',
-  Vada: vadaImg || 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=600&auto=format&fit=crop&q=80',
+  Idli: idliImg || '/idli.png',
+  Dosa: dosaImg || '/dosa.png',
+  Vada: vadaImg || '/vada.png',
 };
 
 const getToken = () => localStorage.getItem('token');
