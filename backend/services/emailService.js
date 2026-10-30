@@ -1,8 +1,14 @@
 const { Resend } = require('resend');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const apiKey = process.env.RESEND_API_KEY;
+const resend = apiKey && apiKey.startsWith('re_') ? new Resend(apiKey) : null;
 
 async function sendEmail({ to, subject, html, from }) {
+  if (!resend) {
+    console.warn('⚠️ Resend API key not configured or invalid, skipping email.');
+    return { skipped: true };
+  }
+
   const primarySender = from || process.env.RESEND_FROM_EMAIL || 'Breakfast Center <orders@mechanicguru.me>';
 
   try {
@@ -45,7 +51,7 @@ async function sendEmail({ to, subject, html, from }) {
     } catch (e) {
       console.error('❌ Resend fallback also failed:', e.message);
     }
-    throw error;
+    return { error: error.message };
   }
 }
 

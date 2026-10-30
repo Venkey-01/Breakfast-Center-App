@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
   Utensils, ShoppingCart, Clock, CheckCircle, XCircle, LogOut, Plus, Minus, RefreshCw,
   Receipt, Printer, ShieldCheck, UserCheck, Lock, Users, TrendingUp, Search,
-  Download, Eye, Star, BarChart2, ChefHat, Mail, Phone
+  Download, Eye, Star, BarChart2, ChefHat, Mail, Phone, Settings, Key, Save, AlertCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -13,7 +13,6 @@ import vadaImg from './assets/vada.png';
 import bgImg from './assets/image.png';
 
 const API_BASE = '/api';
-const ADMIN_PASSCODE = 'admin123';
 
 const IMAGES = {
   Idli: idliImg || '/idli.png',
@@ -43,11 +42,24 @@ export default function App() {
     return u.role === 'admin' ? 'admin' : 'menu';
   });
 
-  const [authTab, setAuthTab] = useState('login');
-  const [authMode, setAuthMode] = useState('none');
-  const [form, setForm] = useState({ name: '', email: '', password: '', mobile: '', adminPasscode: '' });
+  const [authMode, setAuthMode] = useState('customer'); // 'customer' or 'admin'
+  const [authTab, setAuthTab] = useState('login'); // for customer: 'login' or 'signup'
+  const [form, setForm] = useState({ name: '', email: '', password: '', mobile: '' });
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Admin password / credentials update state
+  const [ownerForm, setOwnerForm] = useState({
+    name: '',
+    email: '',
+    mobile: '',
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [ownerUpdating, setOwnerUpdating] = useState(false);
+  const [ownerSuccess, setOwnerSuccess] = useState('');
+  const [ownerError, setOwnerError] = useState('');
 
   const [quantities, setQuantities] = useState({ Idli: 0, Dosa: 0, Vada: 0 });
   const [showCheckout, setShowCheckout] = useState(false);
@@ -59,7 +71,7 @@ export default function App() {
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
 
-  const [adminTab, setAdminTab] = useState('orders');
+  const [adminTab, setAdminTab] = useState('orders'); // 'orders', 'stats', 'customers', 'settings'
   const [stats, setStats] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,20 +83,42 @@ export default function App() {
     { id: 'Vada', name: 'Vada', price: 50, img: IMAGES.Vada, desc: 'Crispy deep-fried savory lentil donuts' },
   ];
 
+  // Sync owner form when user or admin tab changes
+  useEffect(() => {
+    if (user && user.role === 'admin') {
+      setOwnerForm(f => ({
+        ...f,
+        name: user.name || '',
+        email: user.email || '',
+        mobile: user.mobile || '',
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      }));
+    }
+  }, [user, adminTab]);
+
   const handleAuth = async (isAdmin = false) => {
     setAuthError('');
     if (!form.email || !form.password) { setAuthError('Email and password required.'); return; }
-    if (authTab === 'signup' && !form.name) { setAuthError('Name is required.'); return; }
-    if (isAdmin && authTab === 'login' && form.adminPasscode !== ADMIN_PASSCODE) {
-      setAuthError('Invalid admin passcode.'); return;
-    }
+    if (!isAdmin && authTab === 'signup' && !form.name) { setAuthError('Name is required.'); return; }
 
     setAuthLoading(true);
     try {
-      const endpoint = authTab === 'login' ? '/auth/login' : '/auth/signup';
-      const payload = authTab === 'signup'
-        ? { name: form.name, email: form.email, password: form.password, mobile: form.mobile, role: isAdmin ? 'admin' : 'user', adminPasscode: form.adminPasscode }
-        : { email: form.email, password: form.password, requireAdmin: isAdmin, adminPasscode: isAdmin ? form.adminPasscode : undefined };
+      const endpoint = (!isAdmin && authTab === 'signup') ? '/auth/signup' : '/auth/login';
+      const payload = (!isAdmin && authTab === 'signup')
+        ? {
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          mobile: form.mobile,
+          role: 'user'
+        }
+        : {
+          email: form.email,
+          password: form.password,
+          requireAdmin: isAdmin
+        };
 
       const res = await axios.post(`${API_BASE}${endpoint}`, payload);
 
@@ -104,12 +138,66 @@ export default function App() {
     }
   };
 
+  const handleUpdateAdminPassword = async (e) => {
+    if (e) e.preventDefault();
+    setOwnerError('');
+    setOwnerSuccess('');
+
+    if (!ownerForm.currentPassword) {
+      setOwnerError('Current password is required to change password.');
+      return;
+    }
+    if (!ownerForm.newPassword) {
+      setOwnerError('Please enter a new password.');
+      return;
+    }
+    if (ownerForm.newPassword.length < 6) {
+      setOwnerError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (ownerForm.newPassword !== ownerForm.confirmPassword) {
+      setOwnerError('New password and confirm password do not match.');
+      return;
+    }
+
+    setOwnerUpdating(true);
+    try {
+      const payload = {
+        name: ownerForm.name,
+        email: ownerForm.email,
+        mobile: ownerForm.mobile,
+        currentPassword: ownerForm.currentPassword,
+        newPassword: ownerForm.newPassword
+      };
+
+      const res = await axios.put(`${API_BASE}/auth/update-credentials`, payload, {
+        headers: authHeader()
+      });
+
+      if (res.data.success) {
+        if (res.data.token) localStorage.setItem('token', res.data.token);
+        if (res.data.user) {
+          localStorage.setItem('user', JSON.stringify(res.data.user));
+          setUser(res.data.user);
+        }
+        setOwnerSuccess('🎉 Admin password updated successfully! Use your new password on your next login.');
+        setOwnerForm(f => ({ ...f, currentPassword: '', newPassword: '', confirmPassword: '' }));
+      } else {
+        setOwnerError(res.data.message || 'Failed to update password.');
+      }
+    } catch (err) {
+      setOwnerError(err.response?.data?.message || err.message || 'Error updating password.');
+    } finally {
+      setOwnerUpdating(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.clear();
     setUser(null);
-    setAuthMode('none');
+    setAuthMode('customer');
     setAuthTab('login');
-    setForm({ name: '', email: '', password: '', mobile: '', adminPasscode: '' });
+    setForm({ name: '', email: '', password: '', mobile: '' });
     setView('auth');
   };
 
@@ -180,7 +268,7 @@ export default function App() {
   };
 
   const updateStatus = async (id, status) => {
-    setOrders(prev => prev.map(o => String(o._id) === String(id) ? { ...o, status } : o));
+    setOrders(prev => prev.map(o => String(o._id || o.id) === String(id) ? { ...o, status } : o));
     try { await axios.put(`${API_BASE}/orders/${id}`, { status }); } catch (err) { console.error(err); }
   };
 
@@ -188,7 +276,7 @@ export default function App() {
     const rows = [['Order ID', 'Customer', 'Email', 'Items', 'Total', 'Status', 'Date']];
     orders.forEach(o => {
       const items = o.items?.map(i => `${i.name}x${i.quantity}`).join('; ') || o.item;
-      rows.push([String(o._id).slice(-8), o.name, o.email, items, `₹${o.grandTotal || o.price}`, o.status || 'Pending', new Date(o.createdAt).toLocaleDateString()]);
+      rows.push([String(o._id || o.id).slice(-8), o.name, o.email, items, `₹${o.grandTotal || o.price}`, o.status || 'Pending', new Date(o.createdAt || o.created_at).toLocaleDateString()]);
     });
     const csv = rows.map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -199,37 +287,90 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px' }}>
       {view === 'auth' && (
-        <div className="bright-card animate-fade-in" style={{ width: '100%', maxWidth: '440px', padding: '40px 32px', textAlign: 'center', marginTop: '40px' }}>
+        <div className="bright-card animate-fade-in" style={{ width: '100%', maxWidth: '460px', padding: '36px 30px', textAlign: 'center', marginTop: '30px' }}>
           <div style={{ background: '#e8f5e9', width: '64px', height: '64px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
             <Utensils size={32} color="#2e7d32" />
           </div>
           <h1 style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b', marginBottom: '6px' }}>Breakfast Center</h1>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '24px' }}>{greeting.icon} {greeting.text}! Order fresh breakfast in seconds.</p>
+          <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '20px' }}>{greeting.icon} {greeting.text}! Fresh South Indian Delicacies.</p>
 
-          {authMode === 'none' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <button className="btn-green" style={{ width: '100%', padding: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setAuthMode('customer')}>
-                <UserCheck size={20} /> Customer Login / Sign Up
-              </button>
-              <button style={{ width: '100%', padding: '12px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: '700', color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setAuthMode('admin')}>
-                <ShieldCheck size={18} color="#2e7d32" /> Restaurant Admin Portal
-              </button>
-            </div>
-          )}
+          {/* Top-Level Portal Selector (Customer vs Restaurant Owner) */}
+          <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: '12px', padding: '4px', marginBottom: '20px' }}>
+            <button
+              onClick={() => {
+                setAuthMode('customer');
+                setAuthError('');
+                setForm({ name: '', email: '', password: '', mobile: '' });
+              }}
+              style={{
+                flex: 1,
+                padding: '10px 8px',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                fontWeight: '700',
+                fontSize: '0.88rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                background: authMode === 'customer' ? '#2e7d32' : 'transparent',
+                color: authMode === 'customer' ? 'white' : '#64748b',
+                transition: 'all 0.2s'
+              }}>
+              <UserCheck size={16} /> Customer Portal
+            </button>
+            <button
+              onClick={() => {
+                setAuthMode('admin');
+                setAuthError('');
+                setForm({ name: '', email: 'admin@restaurant.com', password: 'admin123', mobile: '' });
+              }}
+              style={{
+                flex: 1,
+                padding: '10px 8px',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                fontWeight: '700',
+                fontSize: '0.88rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                background: authMode === 'admin' ? '#1e293b' : 'transparent',
+                color: authMode === 'admin' ? '#fcd34d' : '#64748b',
+                transition: 'all 0.2s'
+              }}>
+              <ShieldCheck size={16} /> Restaurant Owner
+            </button>
+          </div>
 
+          {/* Customer Portal (Login vs Sign Up) */}
           {authMode === 'customer' && (
             <div className="animate-fade-in" style={{ textAlign: 'left' }}>
-              <h2 style={{ fontSize: '1.15rem', color: '#1e293b', textAlign: 'center', fontWeight: '700', marginBottom: '16px' }}>
-                {authTab === 'login' ? '👋 Welcome Back' : '🎉 Create Account'}
-              </h2>
-              <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: '10px', padding: '4px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', background: '#e2e8f0', borderRadius: '10px', padding: '3px', marginBottom: '20px' }}>
                 {['login', 'signup'].map(t => (
-                  <button key={t} onClick={() => { setAuthTab(t); setAuthError(''); }}
-                    style={{ flex: 1, padding: '8px', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem', background: authTab === t ? '#2e7d32' : 'transparent', color: authTab === t ? 'white' : '#64748b' }}>
-                    {t === 'login' ? 'Login' : 'Sign Up'}
+                  <button
+                    key={t}
+                    onClick={() => { setAuthTab(t); setAuthError(''); }}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '0.86rem',
+                      background: authTab === t ? 'white' : 'transparent',
+                      color: authTab === t ? '#1e293b' : '#64748b',
+                      boxShadow: authTab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                    }}>
+                    {t === 'login' ? 'Customer Login' : 'Create Account'}
                   </button>
                 ))}
               </div>
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {authTab === 'signup' && (
                   <div>
@@ -239,7 +380,7 @@ export default function App() {
                 )}
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Email Address *</label>
-                  <input type="email" placeholder="yourname@gmail.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+                  <input type="email" placeholder="customer@gmail.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
                 </div>
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Password *</label>
@@ -247,46 +388,60 @@ export default function App() {
                 </div>
                 {authTab === 'signup' && (
                   <div>
-                    <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Mobile (optional)</label>
+                    <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Mobile Number (optional)</label>
                     <input type="text" placeholder="Phone number" value={form.mobile} onChange={e => setForm({ ...form, mobile: e.target.value })} />
                   </div>
                 )}
+
                 {authError && <div style={{ color: '#dc2626', background: '#fef2f2', padding: '10px 14px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: '500' }}>{authError}</div>}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                  <button className="btn-green" style={{ flex: 1 }} onClick={() => handleAuth(false)} disabled={authLoading}>
-                    {authLoading ? 'Please wait...' : (authTab === 'login' ? 'Login →' : 'Create Account →')}
-                  </button>
-                  <button style={{ background: '#e2e8f0', border: 'none', borderRadius: '8px', padding: '10px 16px', cursor: 'pointer', fontWeight: '600' }} onClick={() => setAuthMode('none')}>Back</button>
-                </div>
+
+                <button className="btn-green" style={{ width: '100%', marginTop: '8px', padding: '12px' }} onClick={() => handleAuth(false)} disabled={authLoading}>
+                  {authLoading ? 'Please wait...' : (authTab === 'login' ? 'Customer Login →' : 'Create Customer Account →')}
+                </button>
               </div>
             </div>
           )}
 
+          {/* Restaurant Owner Portal (DIRECT LOGIN ONLY - NO SIGNUP FORM) */}
           {authMode === 'admin' && (
             <div className="animate-fade-in" style={{ textAlign: 'left' }}>
-              <h2 style={{ fontSize: '1.15rem', color: '#2e7d32', textAlign: 'center', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                <Lock size={18} /> Restaurant Admin Portal
-              </h2>
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', color: '#1e293b', fontSize: '0.92rem' }}>
+                  <Lock size={17} color="#d97706" /> Restaurant Owner Sign In
+                </div>
+
+              </div>
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Admin Email *</label>
-                  <input type="email" placeholder="admin@restaurant.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+                  <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Owner Email Address *</label>
+                  <input
+                    type="email"
+                    placeholder="admin@restaurant.com"
+                    value={form.email}
+                    onChange={e => setForm({ ...form, email: e.target.value })}
+                  />
                 </div>
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Password *</label>
-                  <input type="password" placeholder="Admin password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+                  <input
+                    type="password"
+                    placeholder="Enter password (default: admin123)"
+                    value={form.password}
+                    onChange={e => setForm({ ...form, password: e.target.value })}
+                  />
                 </div>
-                <div>
-                  <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569' }}>Admin Secret Passcode *</label>
-                  <input type="password" placeholder="Enter secret passcode" value={form.adminPasscode} onChange={e => setForm({ ...form, adminPasscode: e.target.value })} />
-                </div>
+
                 {authError && <div style={{ color: '#dc2626', background: '#fef2f2', padding: '10px 14px', borderRadius: '8px', fontSize: '0.88rem', fontWeight: '500' }}>{authError}</div>}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                  <button className="btn-gold" style={{ flex: 1 }} onClick={() => handleAuth(true)} disabled={authLoading}>
-                    {authLoading ? 'Verifying...' : 'Admin Login →'}
-                  </button>
-                  <button style={{ background: '#e2e8f0', border: 'none', borderRadius: '8px', padding: '10px 18px', cursor: 'pointer', fontWeight: '600' }} onClick={() => setAuthMode('none')}>Back</button>
-                </div>
+
+                <button
+                  className="btn-gold"
+                  style={{ width: '100%', marginTop: '8px', padding: '12px', background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)', color: '#fcd34d', border: '1px solid #475569' }}
+                  onClick={() => handleAuth(true)}
+                  disabled={authLoading}
+                >
+                  {authLoading ? 'Verifying Credentials...' : '👑 Log In to Owner Dashboard →'}
+                </button>
               </div>
             </div>
           )}
@@ -313,19 +468,45 @@ export default function App() {
                 </>
               )}
               {user?.role === 'admin' && (
-                <NavBtn label="Dashboard" active={view === 'admin'} onClick={() => setView('admin')} />
+                <>
+                  <NavBtn label="Owner Dashboard" active={view === 'admin' && adminTab !== 'settings'} onClick={() => { setView('admin'); setAdminTab('orders'); }} />
+                  <button
+                    onClick={() => { setView('admin'); setAdminTab('settings'); }}
+                    style={{
+                      padding: '7px 14px',
+                      borderRadius: '20px',
+                      border: 'none',
+                      background: view === 'admin' && adminTab === 'settings' ? '#1e293b' : '#fef3c7',
+                      color: view === 'admin' && adminTab === 'settings' ? '#fcd34d' : '#92400e',
+                      cursor: 'pointer',
+                      fontWeight: '700',
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <Key size={14} /> Update Password
+                  </button>
+                </>
               )}
-              <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>👤 {user?.name}</span>
+              <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
+                {user?.role === 'admin' ? '👑' : '👤'} {user?.name}
+              </span>
               <button onClick={handleLogout} style={{ border: 'none', background: '#fee2e2', color: '#dc2626', padding: '8px 12px', borderRadius: '10px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
                 <LogOut size={15} /> Logout
               </button>
             </div>
           </div>
 
-          <div className="bright-card animate-fade-in" style={{ padding: '18px 24px', marginBottom: '20px', background: 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div className="bright-card animate-fade-in" style={{ padding: '18px 24px', marginBottom: '20px', background: user?.role === 'admin' ? 'linear-gradient(135deg, #1e293b 0%, #334155 100%)' : 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
             <div>
-              <div style={{ fontSize: '1.2rem', fontWeight: '700' }}>{greeting.icon} {greeting.text}, {user?.name?.split(' ')[0]}!</div>
-              <p style={{ color: '#c8e6c9', fontSize: '0.88rem', margin: 0 }}>{greeting.quote}</p>
+              <div style={{ fontSize: '1.2rem', fontWeight: '700' }}>
+                {user?.role === 'admin' ? '👑 Restaurant Owner Portal' : `${greeting.icon} ${greeting.text}, ${user?.name?.split(' ')[0]}!`}
+              </div>
+              <p style={{ color: user?.role === 'admin' ? '#94a3b8' : '#c8e6c9', fontSize: '0.88rem', margin: 0 }}>
+                {user?.role === 'admin' ? 'Logged in as Restaurant Administrator • Supabase PostgreSQL' : greeting.quote}
+              </p>
             </div>
             {selectedItems.length > 0 && view === 'menu' && user?.role === 'user' && (
               <button className="btn-gold" onClick={() => setShowCheckout(true)} style={{ padding: '10px 20px' }}>
@@ -390,10 +571,10 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {orders.filter(o => (user?.email && o.email && o.email.toLowerCase() === user.email.toLowerCase()) || o.name === user?.name).map(order => (
                     <OrderCard
-                      key={order._id}
+                      key={order._id || order.id}
                       order={order}
                       onViewBill={() => setSelectedInvoice(order)}
-                      onCancelOrder={() => updateStatus(order._id, 'Cancelled')}
+                      onCancelOrder={() => updateStatus(order._id || order.id, 'Cancelled')}
                       onReorder={() => {
                         const newQs = { Idli: 0, Dosa: 0, Vada: 0 };
                         if (order.items && order.items.length > 0) {
@@ -414,10 +595,10 @@ export default function App() {
 
           {view === 'admin' && (
             <div className="bright-card animate-fade-in" style={{ padding: '28px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h2 style={{ fontSize: '1.6rem', color: '#1e293b', fontWeight: '800' }}>Admin Dashboard</h2>
-                  <p style={{ color: '#64748b', fontSize: '0.88rem', margin: 0 }}>Real-time order management & CRM</p>
+                  <h2 style={{ fontSize: '1.6rem', color: '#1e293b', fontWeight: '800' }}>Restaurant Owner Dashboard</h2>
+                  <p style={{ color: '#64748b', fontSize: '0.88rem', margin: 0 }}>Real-time order management, analytics & credentials</p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button onClick={() => { fetchOrders(); fetchStats(); fetchCustomers(); }} style={{ background: '#f1f5f9', border: 'none', padding: '9px 14px', borderRadius: '10px', cursor: 'pointer', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
@@ -429,18 +610,36 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', background: '#f1f5f9', padding: '5px', borderRadius: '12px', width: 'fit-content' }}>
+              {/* Admin Navigation Tabs */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', background: '#f1f5f9', padding: '5px', borderRadius: '12px', width: 'fit-content', flexWrap: 'wrap' }}>
                 {[
                   { key: 'orders', icon: <Receipt size={15} />, label: 'Orders' },
                   { key: 'stats', icon: <BarChart2 size={15} />, label: 'Analytics' },
                   { key: 'customers', icon: <Users size={15} />, label: 'Customers' },
+                  { key: 'settings', icon: <Key size={15} />, label: 'Update Password' },
                 ].map(t => (
-                  <button key={t.key} onClick={() => setAdminTab(t.key)} style={{ padding: '8px 16px', border: 'none', borderRadius: '9px', cursor: 'pointer', fontWeight: '600', fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '5px', background: adminTab === t.key ? '#2e7d32' : 'transparent', color: adminTab === t.key ? 'white' : '#64748b' }}>
+                  <button
+                    key={t.key}
+                    onClick={() => setAdminTab(t.key)}
+                    style={{
+                      padding: '8px 16px',
+                      border: 'none',
+                      borderRadius: '9px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                      fontSize: '0.88rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: adminTab === t.key ? (t.key === 'settings' ? '#1e293b' : '#2e7d32') : 'transparent',
+                      color: adminTab === t.key ? (t.key === 'settings' ? '#fcd34d' : 'white') : '#64748b'
+                    }}>
                     {t.icon} {t.label}
                   </button>
                 ))}
               </div>
 
+              {/* Orders Tab */}
               {adminTab === 'orders' && (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', marginBottom: '22px' }}>
@@ -482,10 +681,10 @@ export default function App() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                       {orders.map(order => (
-                        <div key={order._id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                        <div key={order._id || order.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '2px' }}>
-                              #{String(order._id).slice(-8)} • {new Date(order.createdAt || Date.now()).toLocaleString()}
+                              #{String(order._id || order.id).slice(-8)} • {new Date(order.createdAt || order.created_at || Date.now()).toLocaleString()}
                             </div>
                             <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '1rem' }}>{order.name} <span style={{ color: '#64748b', fontWeight: '400', fontSize: '0.85rem' }}>({order.email || 'no email'})</span></div>
                             <div style={{ color: '#475569', fontSize: '0.88rem', marginTop: '2px' }}>
@@ -498,9 +697,9 @@ export default function App() {
                           </div>
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             <button onClick={() => setSelectedInvoice(order)} style={{ background: '#f1f5f9', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><Eye size={13} /> Bill</button>
-                            <button onClick={() => updateStatus(order._id, 'Preparing')} style={{ background: '#0284c7', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><ChefHat size={13} /> Prep</button>
-                            <button onClick={() => updateStatus(order._id, 'Completed')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><CheckCircle size={13} /> Done</button>
-                            <button onClick={() => updateStatus(order._id, 'Cancelled')} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><XCircle size={13} /> Cancel</button>
+                            <button onClick={() => updateStatus(order._id || order.id, 'Preparing')} style={{ background: '#0284c7', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><ChefHat size={13} /> Prep</button>
+                            <button onClick={() => updateStatus(order._id || order.id, 'Completed')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><CheckCircle size={13} /> Done</button>
+                            <button onClick={() => updateStatus(order._id || order.id, 'Cancelled')} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '7px 12px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.82rem' }}><XCircle size={13} /> Cancel</button>
                           </div>
                         </div>
                       ))}
@@ -509,6 +708,7 @@ export default function App() {
                 </>
               )}
 
+              {/* Stats Tab */}
               {adminTab === 'stats' && stats && (
                 <div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
@@ -544,34 +744,161 @@ export default function App() {
                 </div>
               )}
 
+              {/* Customers Tab */}
               {adminTab === 'customers' && (
                 <div>
                   <div style={{ marginBottom: '16px', fontWeight: '600', color: '#64748b' }}>
-                    {customers.length} registered customers
+                    {customers.length} registered accounts in Supabase
                   </div>
                   {customers.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>No customers yet.</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       {customers.map(c => (
-                        <div key={c._id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div key={c._id || c.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
                           <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: '#e8f5e9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             <span style={{ fontSize: '1.1rem', fontWeight: '700', color: '#2e7d32' }}>{c.name?.[0]?.toUpperCase()}</span>
                           </div>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: '700', color: '#1e293b' }}>{c.name} {c.role === 'admin' && <span style={{ background: '#fef3c7', color: '#d97706', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '20px', fontWeight: '600' }}>ADMIN</span>}</div>
+                            <div style={{ fontWeight: '700', color: '#1e293b' }}>
+                              {c.name} {c.role === 'admin' && <span style={{ background: '#fef3c7', color: '#d97706', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '20px', fontWeight: '700' }}>RESTAURANT OWNER</span>}
+                            </div>
                             <div style={{ display: 'flex', gap: '14px', marginTop: '2px', fontSize: '0.85rem', color: '#64748b' }}>
                               <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Mail size={13} /> {c.email}</span>
                               {c.mobile && <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Phone size={13} /> {c.mobile}</span>}
                             </div>
                           </div>
                           <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                            Joined {new Date(c.createdAt).toLocaleDateString()}
+                            Joined {new Date(c.createdAt || c.created_at || Date.now()).toLocaleDateString()}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Dedicated Update Password & Credentials Tab */}
+              {adminTab === 'settings' && (
+                <div className="animate-fade-in" style={{ maxWidth: '600px', margin: '0 auto' }}>
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '28px', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+                      <div style={{ background: '#1e293b', width: '48px', height: '48px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Key size={24} color="#fcd34d" />
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: '1.3rem', fontWeight: '800', color: '#1e293b', margin: 0 }}>Update Admin Password</h3>
+                        <p style={{ color: '#64748b', fontSize: '0.84rem', margin: '3px 0 0' }}>
+                          Signed in as <strong style={{ color: '#1e293b' }}>{user?.email}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    {ownerSuccess && (
+                      <div style={{ background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', padding: '14px 16px', borderRadius: '10px', marginBottom: '18px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <CheckCircle size={18} /> {ownerSuccess}
+                      </div>
+                    )}
+
+                    {ownerError && (
+                      <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', padding: '14px 16px', borderRadius: '10px', marginBottom: '18px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertCircle size={18} /> {ownerError}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleUpdateAdminPassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div>
+                        <label style={{ fontSize: '0.84rem', fontWeight: '700', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                          Current Password *
+                        </label>
+                        <input
+                          type="password"
+                          value={ownerForm.currentPassword}
+                          onChange={e => setOwnerForm({ ...ownerForm, currentPassword: e.target.value })}
+                          placeholder="Enter your current password (default: admin123)"
+                          style={{ width: '100%' }}
+                          required
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.84rem', fontWeight: '700', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                            New Password *
+                          </label>
+                          <input
+                            type="password"
+                            value={ownerForm.newPassword}
+                            onChange={e => setOwnerForm({ ...ownerForm, newPassword: e.target.value })}
+                            placeholder="Minimum 6 characters"
+                            style={{ width: '100%' }}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.84rem', fontWeight: '700', color: '#334155', display: 'block', marginBottom: '6px' }}>
+                            Confirm New Password *
+                          </label>
+                          <input
+                            type="password"
+                            value={ownerForm.confirmPassword}
+                            onChange={e => setOwnerForm({ ...ownerForm, confirmPassword: e.target.value })}
+                            placeholder="Re-enter new password"
+                            style={{ width: '100%' }}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px', marginTop: '6px' }}>
+                        <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#64748b', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Optional Profile Info
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          <div>
+                            <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '4px' }}>Owner Display Name</label>
+                            <input
+                              type="text"
+                              value={ownerForm.name}
+                              onChange={e => setOwnerForm({ ...ownerForm, name: e.target.value })}
+                              placeholder="Restaurant Owner"
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#475569', display: 'block', marginBottom: '4px' }}>Contact Mobile</label>
+                            <input
+                              type="text"
+                              value={ownerForm.mobile}
+                              onChange={e => setOwnerForm({ ...ownerForm, mobile: e.target.value })}
+                              placeholder="Phone number"
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="btn-gold"
+                        disabled={ownerUpdating}
+                        style={{
+                          marginTop: '10px',
+                          padding: '13px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          fontSize: '0.96rem',
+                          background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+                          color: '#fcd34d',
+                          border: '1px solid #475569'
+                        }}
+                      >
+                        <Save size={18} /> {ownerUpdating ? 'Updating in Supabase...' : 'Save & Update Password'}
+                      </button>
+                    </form>
+                  </div>
                 </div>
               )}
             </div>
@@ -630,8 +957,8 @@ export default function App() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '0.88rem', color: '#334155', marginBottom: '18px' }}>
               <div><strong>Customer:</strong> {selectedInvoice.name}</div>
-              <div><strong>Order ID:</strong> #{String(selectedInvoice._id).slice(-8)}</div>
-              <div><strong>Date:</strong> {new Date(selectedInvoice.createdAt || Date.now()).toLocaleDateString()}</div>
+              <div><strong>Order ID:</strong> #{String(selectedInvoice._id || selectedInvoice.id).slice(-8)}</div>
+              <div><strong>Date:</strong> {new Date(selectedInvoice.createdAt || selectedInvoice.created_at || Date.now()).toLocaleDateString()}</div>
               <div><strong>Status:</strong> <span style={{ color: '#2e7d32', fontWeight: '700' }}>{selectedInvoice.status || 'Pending'}</span></div>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '18px' }}>
@@ -702,7 +1029,7 @@ function OrderCard({ order, onViewBill, onCancelOrder, onReorder }) {
     <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
         <div>
-          <div style={{ fontSize: '0.82rem', color: '#64748b' }}>Order #{String(order._id).slice(-8)} • {new Date(order.createdAt || Date.now()).toLocaleString()}</div>
+          <div style={{ fontSize: '0.82rem', color: '#64748b' }}>Order #{String(order._id || order.id).slice(-8)} • {new Date(order.createdAt || order.created_at || Date.now()).toLocaleString()}</div>
           <h3 style={{ fontWeight: '700', color: '#1e293b', fontSize: '1rem', marginTop: '2px' }}>
             {order.items?.map(i => `${i.name} ×${i.quantity}`).join(', ') || `${order.item} ×${order.quantity}`}
           </h3>

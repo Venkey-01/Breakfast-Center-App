@@ -1,46 +1,13 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
+const { supabase } = require('./db/supabase');
 
 const app = express();
 
 app.disable('x-powered-by');
-
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://venkateswara23bce9443_db_user:IoL9MrbbJ53rF9wr@cluster0.bjrapl5.mongodb.net/hotel?retryWrites=true&w=majority';
-
-let cached = global.mongoose;
-if (!cached) {
-  cached = global.mongoose = { conn: null, promise: null };
-}
-
-async function connectDB() {
-  if (cached.conn && mongoose.connection.readyState === 1) {
-    return cached.conn;
-  }
-
-  if (!cached.promise) {
-    const opts = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 3000,
-      maxPoolSize: 10,
-      socketTimeoutMS: 20000,
-    };
-
-    cached.promise = mongoose.connect(MONGO_URI, opts).then((m) => {
-      console.log('✅ Connected to MongoDB Atlas');
-      return m;
-    }).catch(err => {
-      cached.promise = null;
-      console.warn('⚠️ MongoDB Atlas Connection Warning:', err.message);
-      return null;
-    });
-  }
-
-  cached.conn = await cached.promise;
-  return cached.conn;
-}
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
@@ -85,15 +52,6 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-  } catch (err) {
-    console.warn('⚠️ DB Connection Middleware Note:', err.message);
-  }
-  next();
-});
-
 const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
@@ -103,22 +61,30 @@ app.use('/auth', authRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/orders', orderRoutes);
 
-const getHealthStatus = () => {
-  const states = ['Disconnected', 'Connected', 'Connecting', 'Disconnecting'];
+const getHealthStatus = async () => {
+  let dbStatus = 'Connected';
+  try {
+    const { error } = await supabase.from('users').select('id').limit(1);
+    if (error) dbStatus = `Error: ${error.message}`;
+  } catch (err) {
+    dbStatus = `Disconnected: ${err.message}`;
+  }
+
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     database: {
-      state: states[mongoose.connection.readyState] || 'Unknown',
-      readyState: mongoose.connection.readyState,
+      type: 'Supabase PostgreSQL',
+      status: dbStatus,
+      project: 'mjeqguefmmzubtarsoxu',
     },
     environment: process.env.NODE_ENV || 'development',
   };
 };
 
-app.get('/api/health', (req, res) => res.json(getHealthStatus()));
-app.get('/health', (req, res) => res.json(getHealthStatus()));
+app.get('/api/health', async (req, res) => res.json(await getHealthStatus()));
+app.get('/health', async (req, res) => res.json(await getHealthStatus()));
 
 app.use((req, res) => {
   res.status(404).json({
@@ -136,11 +102,33 @@ app.use((err, req, res, next) => {
   });
 });
 
+const ensureAdminUser = async () => {
+  try {
+    const { data } = await supabase.from('users').select('id').eq('email', 'admin@restaurant.com').maybeSingle();
+    if (!data) {
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash('admin123', 10);
+      await supabase.from('users').insert({
+        name: 'Restaurant Owner',
+        email: 'admin@restaurant.com',
+        password: hash,
+        mobile: '9876543210',
+        role: 'admin',
+      });
+      console.log('👑 Default restaurant owner initialized: admin@restaurant.com (password: admin123)');
+    }
+  } catch (e) {
+    console.warn('⚠️ Admin init note:', e.message);
+  }
+};
+
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Strong Express Server running on port ${PORT}`);
+  app.listen(PORT, async () => {
+    console.log(`🚀 Breakfast Server running on port ${PORT}`);
+    console.log(`⚡ Connected to Supabase PostgreSQL Database`);
     console.log(`📡 CORS allowed origins: ${Array.isArray(allowedOrigins) ? allowedOrigins.join(', ') : allowedOrigins}`);
+    await ensureAdminUser();
   });
 }
 

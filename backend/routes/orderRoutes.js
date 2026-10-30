@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const { appendRowToSheet } = require('../services/sheetsService');
@@ -30,8 +29,8 @@ function createHtmlReceipt(order) {
       </div>
       <div style="margin: 20px 0; color: #333;">
         <p style="margin: 4px 0;"><strong>Customer Name:</strong> ${order.name}</p>
-        <p style="margin: 4px 0;"><strong>Order ID:</strong> ${order._id}</p>
-        <p style="margin: 4px 0;"><strong>Date:</strong> ${new Date(order.createdAt).toLocaleString()}</p>
+        <p style="margin: 4px 0;"><strong>Order ID:</strong> ${order._id || order.id}</p>
+        <p style="margin: 4px 0;"><strong>Date:</strong> ${new Date(order.createdAt || order.created_at).toLocaleString()}</p>
         <p style="margin: 4px 0;"><strong>Status:</strong> <span style="color: #2e7d32; font-weight: bold;">${order.status}</span></p>
       </div>
       <table style="width: 100%; border-collapse: collapse; margin-top: 16px;">
@@ -65,7 +64,7 @@ router.post('/', async (req, res) => {
     const computedGrandTotal = grandTotal || (computedSubtotal + computedTax);
 
     const orderData = {
-      _id: 'ORD' + Date.now().toString().slice(-6),
+      id: 'ORD' + Date.now().toString().slice(-6),
       name: name || 'Guest',
       email: email || '',
       mobile: mobile || '',
@@ -76,23 +75,18 @@ router.post('/', async (req, res) => {
       subtotal: computedSubtotal,
       tax: computedTax,
       grandTotal: computedGrandTotal,
+      grand_total: computedGrandTotal,
       status: 'Pending',
-      createdAt: new Date()
+      created_at: new Date().toISOString()
     };
 
     let order = null;
     try {
-      if (mongoose.connection.readyState === 1) {
-        order = new Order(orderData);
-        await Promise.race([
-          order.save(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 1000))
-        ]);
-      } else {
-        order = orderData;
-      }
+      const orderModel = new Order(orderData);
+      order = await orderModel.save();
     } catch (dbErr) {
-      order = orderData;
+      console.warn('⚠️ Supabase order save fallback:', dbErr.message);
+      order = { ...orderData, _id: orderData.id };
     }
 
     inMemoryOrders.unshift(order);
@@ -116,7 +110,7 @@ router.post('/', async (req, res) => {
     if (order.email && order.email.includes('@')) {
       sendEmail({
         to: order.email,
-        subject: `🍳 Breakfast Center Order Receipt #${order._id.toString().slice(-6)}`,
+        subject: `🍳 Breakfast Center Order Receipt #${String(order._id || order.id).slice(-6)}`,
         html: createHtmlReceipt(order)
       }).catch(err => console.error('Resend email error:', err.message));
     }
@@ -129,28 +123,16 @@ router.post('/', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    let filter = {};
-    if (req.query.name) filter.name = new RegExp(req.query.name, 'i');
+    const filter = {};
+    if (req.query.name) filter.name = req.query.name;
     if (req.query.status) filter.status = req.query.status;
-    if (req.query.search) {
-      filter.$or = [
-        { name: new RegExp(req.query.search, 'i') },
-        { email: new RegExp(req.query.search, 'i') }
-      ];
-    }
+    if (req.query.search) filter.search = req.query.search;
 
     let orders = [];
     try {
-      if (mongoose.connection.readyState === 1) {
-        orders = await Promise.race([
-          Order.find(filter).sort({ createdAt: -1 }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 1000))
-        ]);
-      } else {
-        orders = [...inMemoryOrders];
-        if (req.query.name) orders = orders.filter(o => o.name === req.query.name);
-      }
+      orders = await Order.find(filter);
     } catch (dbErr) {
+      console.warn('⚠️ Supabase order find fallback:', dbErr.message);
       orders = [...inMemoryOrders];
       if (req.query.name) orders = orders.filter(o => o.name === req.query.name);
     }
@@ -175,17 +157,17 @@ router.get('/stats', async (req, res) => {
 
     let allOrders = [];
     try {
-      allOrders = await Order.find({}).sort({ createdAt: -1 });
+      allOrders = await Order.find({});
     } catch (e) {
       allOrders = [...inMemoryOrders];
     }
 
     const totalRevenue = allOrders.reduce((sum, o) => sum + (o.grandTotal || o.price || 0), 0);
-    const todayRevenue = allOrders.filter(o => new Date(o.createdAt) >= todayStart)
+    const todayRevenue = allOrders.filter(o => new Date(o.createdAt || o.created_at) >= todayStart)
       .reduce((sum, o) => sum + (o.grandTotal || o.price || 0), 0);
-    const weekRevenue = allOrders.filter(o => new Date(o.createdAt) >= weekStart)
+    const weekRevenue = allOrders.filter(o => new Date(o.createdAt || o.created_at) >= weekStart)
       .reduce((sum, o) => sum + (o.grandTotal || o.price || 0), 0);
-    const monthRevenue = allOrders.filter(o => new Date(o.createdAt) >= monthStart)
+    const monthRevenue = allOrders.filter(o => new Date(o.createdAt || o.created_at) >= monthStart)
       .reduce((sum, o) => sum + (o.grandTotal || o.price || 0), 0);
 
     const statusCounts = { Pending: 0, Preparing: 0, Completed: 0, Cancelled: 0 };
@@ -224,30 +206,27 @@ router.put('/:id', async (req, res) => {
     const orderId = req.params.id;
     let order = null;
 
-    const memOrder = inMemoryOrders.find(o => String(o._id) === String(orderId));
+    const memOrder = inMemoryOrders.find(o => String(o._id || o.id) === String(orderId));
     if (memOrder) {
       memOrder.status = status;
       order = memOrder;
     }
 
     try {
-      if (mongoose.connection.readyState === 1) {
-        const dbOrder = await Promise.race([
-          Order.findByIdAndUpdate(orderId, { status }, { new: true }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 1000))
-        ]);
-        if (dbOrder) order = dbOrder;
-      }
-    } catch (dbErr) {}
+      const dbOrder = await Order.findByIdAndUpdate(orderId, { status });
+      if (dbOrder) order = dbOrder;
+    } catch (dbErr) {
+      console.warn('⚠️ Supabase order update fallback:', dbErr.message);
+    }
 
     if (!order) {
-      order = { _id: orderId, status };
+      order = { id: orderId, _id: orderId, status };
     }
 
     let targetEmail = order.email;
-    if (!targetEmail && order.name && mongoose.connection.readyState === 1) {
+    if (!targetEmail && order.name) {
       try {
-        const matchingUser = await User.findOne({ name: new RegExp('^' + order.name.trim() + '$', 'i') });
+        const matchingUser = await User.findOne({ name: order.name.trim() });
         if (matchingUser) targetEmail = matchingUser.email;
       } catch (e) {}
     }
@@ -255,7 +234,7 @@ router.put('/:id', async (req, res) => {
     if (targetEmail && targetEmail.includes('@') && (status === 'Completed' || status === 'Preparing' || status === 'Cancelled')) {
       sendEmail({
         to: targetEmail,
-        subject: `🍳 Breakfast Center Order Update #${String(order._id).slice(-6)}: ${status}`,
+        subject: `🍳 Breakfast Center Order Update #${String(order._id || order.id).slice(-6)}: ${status}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; border: 1px solid #2e7d32; border-radius: 12px; padding: 24px; background: #ffffff;">
             <div style="text-align: center; border-bottom: 2px solid #2e7d32; padding-bottom: 12px;">
@@ -268,7 +247,7 @@ router.put('/:id', async (req, res) => {
               <div style="background: #e8f5e9; border: 1px solid #a5d6a7; padding: 14px; border-radius: 10px; text-align: center; margin: 16px 0;">
                 <span style="color: #1b5e20; font-size: 20px; font-weight: bold;">${status}</span>
               </div>
-              <p style="color: #666; font-size: 13px;">Order ID: #${String(order._id).slice(-6)}</p>
+              <p style="color: #666; font-size: 13px;">Order ID: #${String(order._id || order.id).slice(-6)}</p>
             </div>
             <div style="border-top: 1px dashed #ccc; padding-top: 12px; text-align: center; color: #888; font-size: 12px;">
               Thank you for dining with Breakfast Center! 🥞
